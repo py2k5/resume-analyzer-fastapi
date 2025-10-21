@@ -3,3 +3,5 @@ fitz
 uvicorn
 python-multipart
 pymupdf
+frontend
+gunicorn
