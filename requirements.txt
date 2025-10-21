@@ -1,5 +1,4 @@
 fastapi
-fitz
 uvicorn
 python-multipart
 pymupdf
