@@ -97,8 +97,62 @@ jobs:
           # Show package size
           ls -lh resume-analyzer-lambda.zip
 
+      - name: Create Lambda Execution Role
+        run: |
+          echo "🔧 Setting up Lambda execution role..."
+          
+          # Get current account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "📋 AWS Account ID: $ACCOUNT_ID"
+          
+          # Create Lambda execution role if it doesn't exist
+          if aws iam get-role --role-name LambdaExecutionRole >/dev/null 2>&1; then
+            echo "✅ Lambda execution role already exists"
+          else
+            echo "Creating Lambda execution role..."
+            aws iam create-role \
+              --role-name LambdaExecutionRole \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "lambda.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                  }
+                ]
+              }'
+            echo "✅ Lambda execution role created"
+          fi
+          
+          # Attach basic execution policy
+          echo "Attaching basic execution policy..."
+          aws iam attach-role-policy \
+            --role-name LambdaExecutionRole \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole \
+            2>/dev/null && echo "✅ Basic execution policy attached" || echo "ℹ️  Policy already attached"
+          
+          # Attach Textract policy
+          echo "Attaching Textract policy..."
+          aws iam attach-role-policy \
+            --role-name LambdaExecutionRole \
+            --policy-arn arn:aws:iam::aws:policy/AmazonTextractFullAccess \
+            2>/dev/null && echo "✅ Textract policy attached" || echo "ℹ️  Policy already attached"
+          
+          # Wait for role to be ready
+          echo "Waiting for role to be ready..."
+          sleep 10
+
       - name: Deploy to Lambda
         run: |
+          # Get account ID and role ARN
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          LAMBDA_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/LambdaExecutionRole"
+          
+          echo "Using Lambda role ARN: $LAMBDA_ROLE_ARN"
+          
           # Check if Lambda function exists
           if aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} 2>/dev/null; then
             echo "Updating existing Lambda function..."
@@ -107,9 +161,6 @@ jobs:
               --zip-file fileb://resume-analyzer-lambda.zip
           else
             echo "Creating new Lambda function..."
-            # Get the Lambda execution role ARN from the OIDC role
-            LAMBDA_ROLE_ARN="arn:aws:iam::314146297130:role/LambdaExecutionRole"
-            
             aws lambda create-function \
               --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
               --runtime ${{ env.LAMBDA_RUNTIME }} \

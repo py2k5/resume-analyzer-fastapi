@@ -137,9 +137,23 @@ The OIDC role needs these permissions:
 }
 ```
 
-## Step 4: Create Lambda Execution Role
+## Step 4: Lambda Execution Role (Automatic)
 
-### 4.1 Create Lambda Execution Role
+### 4.1 Automatic Role Creation
+The GitHub Actions workflow automatically creates the Lambda execution role if it doesn't exist. No manual setup required!
+
+### 4.2 Role Creation Process
+The workflow will:
+1. Check if `LambdaExecutionRole` exists
+2. Create the role if it doesn't exist
+3. Attach required policies:
+   - `AWSLambdaBasicExecutionRole`
+   - `AmazonTextractFullAccess`
+4. Wait for role to be ready
+5. Deploy Lambda function
+
+### 4.3 Manual Role Creation (Optional)
+If you prefer to create the role manually:
 ```bash
 # Create Lambda execution role
 aws iam create-role \
@@ -156,16 +170,12 @@ aws iam create-role \
       }
     ]
   }'
-```
 
-### 4.2 Attach Policies to Lambda Role
-```bash
-# Attach basic execution policy
+# Attach policies
 aws iam attach-role-policy \
   --role-name LambdaExecutionRole \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-# Attach Textract policy
 aws iam attach-role-policy \
   --role-name LambdaExecutionRole \
   --policy-arn arn:aws:iam::aws:policy/AmazonTextractFullAccess
