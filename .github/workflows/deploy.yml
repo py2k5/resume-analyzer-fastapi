@@ -171,6 +171,23 @@ jobs:
               --timeout ${{ env.LAMBDA_TIMEOUT }}
           fi
 
+      - name: Wait for Lambda to become Active
+        run: |
+          echo "Waiting for Lambda function to become Active..."
+          for i in {1..30}; do
+            STATUS=$(aws lambda get-function-configuration --function-name ${{ env.LAMBDA_FUNCTION_NAME }} --query 'State' --output text 2>/dev/null || echo "Unknown")
+            echo "Current state: $STATUS"
+            if [ "$STATUS" = "Active" ]; then
+              echo "✅ Lambda is Active"
+              break
+            fi
+            if [ "$STATUS" = "Failed" ]; then
+              echo "❌ Lambda creation failed"
+              exit 1
+            fi
+            sleep 5
+          done
+
       - name: Update Lambda configuration
         run: |
           aws lambda update-function-configuration \
