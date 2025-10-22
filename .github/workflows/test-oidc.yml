@@ -6,7 +6,7 @@ on:
     branches: [ main, master ]
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-southeast-2
 
 jobs:
   test-oidc:
