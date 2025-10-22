@@ -5,3 +5,4 @@ pymupdf
 frontend
 gunicorn
 tools
+jinja2

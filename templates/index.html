@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Resume Analyzer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Resume Analyzer</h1>
+        <p>Upload your resume (PDF) to extract skills and insights.</p>
+        <form id="upload-form">
+            <input type="file" id="resume" accept=".pdf,.docx" required>
+            <button type="submit">Analyze</button>
+        </form>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = document.getElementById('resume').files[0];
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const response = await fetch("/analyze", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+            const resultDiv = document.getElementById("result");
+
+            if (data.error) {
+                resultDiv.innerHTML = `<p class="error">${data.error}</p>`;
+            } else {
+                resultDiv.innerHTML = `
+                    <h3>Results:</h3>
+                    <p><strong>Filename:</strong> ${data.filename}</p>
+                    <p><strong>Content Length:</strong> ${data.content_length}</p>
+                    <p><strong>Found Skills:</strong> ${data.found_skills.join(', ') || 'None found'}</p>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
