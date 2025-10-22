@@ -51,11 +51,12 @@ class TextractService:
         """
         try:
             # Make a simple call to test credentials
-            self.textract_client.list_document_analysis_jobs(MaxResults=1)
+            sts_client = boto3.client('sts', region_name=self.region)
+            sts_client.get_caller_identity()
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'AccessDeniedException':
-                logger.warning("AWS credentials are valid but may not have Textract permissions")
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code in ('AccessDenied', 'AccessDeniedException'):
+                logger.warning("AWS credentials are valid but may not have required permissions")
             else:
                 logger.warning(f"AWS connection test failed: {error_code}")
     
@@ -196,7 +197,8 @@ class TextractService:
             True if service is available, False otherwise
         """
         try:
-            self.textract_client.list_document_analysis_jobs(MaxResults=1)
+            sts_client = boto3.client('sts', region_name=self.region)
+            sts_client.get_caller_identity()
             return True
         except Exception:
             return False
