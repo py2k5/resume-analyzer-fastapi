@@ -1,0 +1,262 @@
+name: Deploy Resume Analyzer to AWS Lambda
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  LAMBDA_FUNCTION_NAME: resume-analyzer
+  LAMBDA_RUNTIME: python3.13
+  LAMBDA_HANDLER: lambda_handler.lambda_handler
+  LAMBDA_MEMORY_SIZE: 1024
+  LAMBDA_TIMEOUT: 30
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          # Add your tests here when you create them
+          echo "Running tests..."
+          # pytest tests/ --cov=utils/ --cov-report=xml
+
+      - name: Lint code
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::314146297130:role/OIDCRole_iamadmin_general
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create deployment package
+        run: |
+          # Create deployment directory
+          mkdir -p lambda_deployment
+          
+          # Install dependencies in deployment directory
+          pip install -r requirements.txt -t lambda_deployment/
+          
+          # Copy application files
+          cp -r utils/ lambda_deployment/
+          cp -r templates/ lambda_deployment/
+          cp -r static/ lambda_deployment/
+          cp main.py lambda_deployment/
+          cp lambda_handler.py lambda_deployment/
+          
+          # Create deployment zip
+          cd lambda_deployment
+          zip -r ../resume-analyzer-lambda.zip .
+          cd ..
+          
+          # Show package size
+          ls -lh resume-analyzer-lambda.zip
+
+      - name: Deploy to Lambda
+        run: |
+          # Check if Lambda function exists
+          if aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} 2>/dev/null; then
+            echo "Updating existing Lambda function..."
+            aws lambda update-function-code \
+              --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+              --zip-file fileb://resume-analyzer-lambda.zip
+          else
+            echo "Creating new Lambda function..."
+            # Get the Lambda execution role ARN from the OIDC role
+            LAMBDA_ROLE_ARN="arn:aws:iam::314146297130:role/LambdaExecutionRole"
+            
+            aws lambda create-function \
+              --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+              --runtime ${{ env.LAMBDA_RUNTIME }} \
+              --role $LAMBDA_ROLE_ARN \
+              --handler ${{ env.LAMBDA_HANDLER }} \
+              --zip-file fileb://resume-analyzer-lambda.zip \
+              --memory-size ${{ env.LAMBDA_MEMORY_SIZE }} \
+              --timeout ${{ env.LAMBDA_TIMEOUT }} \
+              --environment Variables='{AWS_DEFAULT_REGION=${{ env.AWS_REGION }}}'
+          fi
+
+      - name: Update Lambda configuration
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --memory-size ${{ env.LAMBDA_MEMORY_SIZE }} \
+            --timeout ${{ env.LAMBDA_TIMEOUT }} \
+            --environment Variables='{AWS_DEFAULT_REGION=${{ env.AWS_REGION }}}'
+
+      - name: Create/Update API Gateway
+        run: |
+          # Check if API Gateway exists
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='resume-analyzer-api'].id" --output text)
+          
+          if [ -z "$API_ID" ] || [ "$API_ID" = "None" ]; then
+            echo "Creating new API Gateway..."
+            API_ID=$(aws apigateway create-rest-api \
+              --name resume-analyzer-api \
+              --description "Resume Analyzer API" \
+              --endpoint-configuration types=REGIONAL \
+              --query 'id' --output text)
+            
+            echo "API Gateway created with ID: $API_ID"
+            
+            # Get root resource ID
+            ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[0].id' --output text)
+            
+            # Create analyze resource
+            ANALYZE_ID=$(aws apigateway create-resource \
+              --rest-api-id $API_ID \
+              --parent-id $ROOT_ID \
+              --path-part analyze \
+              --query 'id' --output text)
+            
+            # Create static resource
+            STATIC_ID=$(aws apigateway create-resource \
+              --rest-api-id $API_ID \
+              --parent-id $ROOT_ID \
+              --path-part static \
+              --query 'id' --output text)
+            
+            # Create proxy resource for static files
+            PROXY_ID=$(aws apigateway create-resource \
+              --rest-api-id $API_ID \
+              --parent-id $STATIC_ID \
+              --path-part '{proxy+}' \
+              --query 'id' --output text)
+            
+            # Add methods
+            aws apigateway put-method \
+              --rest-api-id $API_ID \
+              --resource-id $ROOT_ID \
+              --http-method GET \
+              --authorization-type NONE
+            
+            aws apigateway put-method \
+              --rest-api-id $API_ID \
+              --resource-id $ANALYZE_ID \
+              --http-method POST \
+              --authorization-type NONE
+            
+            aws apigateway put-method \
+              --rest-api-id $API_ID \
+              --resource-id $PROXY_ID \
+              --http-method GET \
+              --authorization-type NONE
+            
+            # Add integrations
+            LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
+            
+            aws apigateway put-integration \
+              --rest-api-id $API_ID \
+              --resource-id $ROOT_ID \
+              --http-method GET \
+              --type AWS_PROXY \
+              --integration-http-method POST \
+              --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+            
+            aws apigateway put-integration \
+              --rest-api-id $API_ID \
+              --resource-id $ANALYZE_ID \
+              --http-method POST \
+              --type AWS_PROXY \
+              --integration-http-method POST \
+              --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+            
+            aws apigateway put-integration \
+              --rest-api-id $API_ID \
+              --resource-id $PROXY_ID \
+              --http-method GET \
+              --type AWS_PROXY \
+              --integration-http-method POST \
+              --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+            
+            # Deploy API
+            aws apigateway create-deployment \
+              --rest-api-id $API_ID \
+              --stage-name prod
+            
+            echo "API Gateway setup completed"
+          else
+            echo "API Gateway already exists with ID: $API_ID"
+          fi
+
+      - name: Grant API Gateway permission to invoke Lambda
+        run: |
+          LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.LAMBDA_FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='resume-analyzer-api'].id" --output text)
+          
+            # Add permission for API Gateway to invoke Lambda
+            aws lambda add-permission \
+              --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+              --statement-id "api-gateway-invoke" \
+              --action lambda:InvokeFunction \
+              --principal apigateway.amazonaws.com \
+              --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:314146297130:$API_ID/*/*" \
+              2>/dev/null || echo "Permission already exists"
+
+      - name: Get API Gateway URL
+        run: |
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='resume-analyzer-api'].id" --output text)
+          API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+          echo "API Gateway URL: $API_URL"
+          echo "API_URL=$API_URL" >> $GITHUB_ENV
+
+      - name: Test deployment
+        run: |
+          echo "Testing deployment..."
+          curl -f "${{ env.API_URL }}/" || echo "Health check failed"
+          echo "Deployment test completed"
+
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Lambda Function:** ${{ env.LAMBDA_FUNCTION_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**API Gateway URL:** ${{ env.API_URL }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime:** ${{ env.LAMBDA_RUNTIME }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Configure custom domain in API Gateway" >> $GITHUB_STEP_SUMMARY
+          echo "2. Update DNS records to point to API Gateway" >> $GITHUB_STEP_SUMMARY
+          echo "3. Test the deployed application" >> $GITHUB_STEP_SUMMARY

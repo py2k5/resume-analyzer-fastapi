@@ -8,9 +8,9 @@
 <body>
     <div class="container">
         <h1>Resume Analyzer</h1>
-        <p>Upload your resume (PDF) to extract skills and insights.</p>
+        <p>Upload your resume (PDF, PNG, JPG, JPEG, TIFF) to extract skills and insights.</p>
         <form id="upload-form">
-            <input type="file" id="resume" accept=".pdf,.docx" required>
+            <input type="file" id="resume" accept=".pdf,.png,.jpg,.jpeg,.tiff" required>
             <button type="submit">Analyze</button>
         </form>
 
@@ -20,29 +20,153 @@
     <script>
         document.getElementById('upload-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            
             const file = document.getElementById('resume').files[0];
+            const resultDiv = document.getElementById("result");
+            
+            // Show loading state
+            resultDiv.innerHTML = '<div class="loading">Analyzing resume...</div>';
+            
             const formData = new FormData();
             formData.append("file", file);
 
-            const response = await fetch("/analyze", {
-                method: "POST",
-                body: formData
-            });
+            try {
+                const response = await fetch("/analyze", {
+                    method: "POST",
+                    body: formData
+                });
 
-            const data = await response.json();
-            const resultDiv = document.getElementById("result");
+                const data = await response.json();
 
-            if (data.error) {
-                resultDiv.innerHTML = `<p class="error">${data.error}</p>`;
-            } else {
-                resultDiv.innerHTML = `
-                    <h3>Results:</h3>
-                    <p><strong>Filename:</strong> ${data.filename}</p>
-                    <p><strong>Content Length:</strong> ${data.content_length}</p>
-                    <p><strong>Found Skills:</strong> ${data.found_skills.join(', ') || 'None found'}</p>
-                `;
+                if (data.error) {
+                    resultDiv.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                } else {
+                    displayResults(data);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">Network error: ${error.message}</p>`;
             }
         });
+
+        function displayResults(data) {
+            const resultDiv = document.getElementById("result");
+            
+            // Skills section
+            let skillsHtml = '';
+            if (data.skills && Object.keys(data.skills).length > 0) {
+                skillsHtml = '<div class="skills-container">';
+                
+                Object.entries(data.skills).forEach(([category, skills]) => {
+                    const categoryTitle = category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    skillsHtml += `
+                        <div class="skill-category">
+                            <h4>${categoryTitle}</h4>
+                            <div class="skill-tags">
+                                ${skills.map(skill => `<span class="skill-tag">${skill}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                });
+                skillsHtml += '</div>';
+            } else {
+                skillsHtml = '<p class="no-skills">No skills detected in the resume.</p>';
+            }
+
+            // Certifications section
+            let certificationsHtml = '';
+            if (data.certifications && Object.keys(data.certifications).length > 0) {
+                certificationsHtml = '<div class="certifications-container">';
+                
+                Object.entries(data.certifications).forEach(([category, certifications]) => {
+                    const categoryTitle = category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    certificationsHtml += `
+                        <div class="certification-category">
+                            <h4>${categoryTitle}</h4>
+                            <div class="certification-list">
+                                ${certifications.map(cert => `
+                                    <div class="certification-item">
+                                        <span class="certification-name">${cert}</span>
+                                        ${getCertificationDetails(cert, data.certification_details)}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                });
+                certificationsHtml += '</div>';
+            } else {
+                certificationsHtml = '<p class="no-certifications">No certifications detected in the resume.</p>';
+            }
+
+            resultDiv.innerHTML = `
+                <div class="results-container">
+                    <h3>Analysis Results</h3>
+                    <div class="file-info">
+                        <p><strong>File:</strong> ${data.filename}</p>
+                        <p><strong>Content Length:</strong> ${data.content_length} characters</p>
+                        <p><strong>Total Skills Found:</strong> ${data.skills_summary?.total_skills_found || 0}</p>
+                        <p><strong>Total Certifications Found:</strong> ${data.certifications_summary?.total_certifications_found || 0}</p>
+                        ${data.document_info ? `
+                            <div class="document-info">
+                                <h4>Document Analysis Info</h4>
+                                <p><strong>Total Blocks:</strong> ${data.document_info.total_blocks || 'N/A'}</p>
+                                ${data.document_info.confidence_scores ? `
+                                    <p><strong>Average Confidence:</strong> ${Math.round(data.document_info.confidence_scores.average_confidence || 0)}%</p>
+                                ` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="skills-section">
+                        <h3 class="section-title">Skills</h3>
+                        ${skillsHtml}
+                        
+                        ${data.skills_summary?.top_skills ? `
+                            <div class="top-skills">
+                                <h4>Top Skills</h4>
+                                <div class="skill-tags">
+                                    ${data.skills_summary.top_skills.map(skill => `<span class="skill-tag highlight">${skill}</span>`).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="certifications-section">
+                        <h3 class="section-title">Certifications</h3>
+                        ${certificationsHtml}
+                        
+                        ${data.certifications_summary?.top_certifications ? `
+                            <div class="top-certifications">
+                                <h4>Top Certifications</h4>
+                                <div class="certification-tags">
+                                    ${data.certifications_summary.top_certifications.map(cert => `<span class="certification-tag highlight">${cert}</span>`).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="method-info">
+                        <small>Extraction Method: ${data.extraction_method}</small>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getCertificationDetails(certification, details) {
+            const certDetail = details.find(d => d.certification === certification);
+            if (certDetail) {
+                let detailHtml = '<div class="certification-details">';
+                if (certDetail.date) {
+                    detailHtml += `<span class="cert-date">${certDetail.date}</span>`;
+                }
+                if (certDetail.issuing_organization) {
+                    detailHtml += `<span class="cert-org">${certDetail.issuing_organization}</span>`;
+                }
+                detailHtml += '</div>';
+                return detailHtml;
+            }
+            return '';
+        }
     </script>
 </body>
 </html>

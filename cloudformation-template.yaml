@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Resume Analyzer Lambda Function with API Gateway'
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: Your custom domain name (e.g., api.yourdomain.com)
+    Default: ''
+  
+  CertificateArn:
+    Type: String
+    Description: ARN of the SSL certificate for your domain
+    Default: ''
+
+Resources:
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ResumeAnalyzerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+      Policies:
+        - PolicyName: TextractPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - textract:DetectDocumentText
+                  - textract:AnalyzeDocument
+                  - textract:StartDocumentAnalysis
+                  - textract:GetDocumentAnalysis
+                  - textract:ListDocumentAnalysisJobs
+                Resource: '*'
+
+  # Lambda Function
+  ResumeAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: resume-analyzer
+      Runtime: python3.9
+      Handler: lambda_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 1024
+      Environment:
+        Variables:
+          AWS_DEFAULT_REGION: !Ref AWS::Region
+      Code:
+        ZipFile: |
+          # Placeholder - upload your actual code here
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Hello from Lambda!'}
+
+  # API Gateway
+  ResumeAnalyzerAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: resume-analyzer-api
+      Description: Resume Analyzer API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Root Resource
+  RootResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ParentId: !GetAtt ResumeAnalyzerAPI.RootResourceId
+      PathPart: ''
+
+  # API Gateway Analyze Resource
+  AnalyzeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ParentId: !GetAtt ResumeAnalyzerAPI.RootResourceId
+      PathPart: analyze
+
+  # API Gateway Static Resource
+  StaticResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ParentId: !GetAtt ResumeAnalyzerAPI.RootResourceId
+      PathPart: static
+
+  # Proxy Resource for Static Files
+  StaticProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ParentId: !Ref StaticResource
+      PathPart: '{proxy+}'
+
+  # GET Method for Root
+  RootGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ResourceId: !Ref RootResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ResumeAnalyzerFunction.Arn}/invocations'
+
+  # POST Method for Analyze
+  AnalyzePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ResourceId: !Ref AnalyzeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ResumeAnalyzerFunction.Arn}/invocations'
+
+  # GET Method for Static Files
+  StaticGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      ResourceId: !Ref StaticProxyResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ResumeAnalyzerFunction.Arn}/invocations'
+
+  # Lambda Permission for API Gateway
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ResumeAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ResumeAnalyzerAPI}/*/*'
+
+  # API Gateway Deployment
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RootGetMethod
+      - AnalyzePostMethod
+      - StaticGetMethod
+    Properties:
+      RestApiId: !Ref ResumeAnalyzerAPI
+      StageName: prod
+
+  # Custom Domain (if provided)
+  CustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref DomainName
+      CertificateArn: !Ref CertificateArn
+
+  # Base Path Mapping
+  BasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref CustomDomain
+      RestApiId: !Ref ResumeAnalyzerAPI
+      Stage: !Ref APIDeployment
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+
+Outputs:
+  APIEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ResumeAnalyzerAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-APIEndpoint'
+
+  CustomDomainEndpoint:
+    Condition: HasCustomDomain
+    Description: Custom domain endpoint URL
+    Value: !Sub 'https://${DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CustomDomainEndpoint'
+
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ResumeAnalyzerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
