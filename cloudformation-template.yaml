@@ -54,7 +54,7 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          AWS_DEFAULT_REGION: !Ref AWS::Region
+          LOG_LEVEL: INFO
       Code:
         ZipFile: |
           # Placeholder - upload your actual code here

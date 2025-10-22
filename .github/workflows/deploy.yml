@@ -117,8 +117,7 @@ jobs:
               --handler ${{ env.LAMBDA_HANDLER }} \
               --zip-file fileb://resume-analyzer-lambda.zip \
               --memory-size ${{ env.LAMBDA_MEMORY_SIZE }} \
-              --timeout ${{ env.LAMBDA_TIMEOUT }} \
-              --environment Variables='{AWS_DEFAULT_REGION=${{ env.AWS_REGION }}}'
+              --timeout ${{ env.LAMBDA_TIMEOUT }}
           fi
 
       - name: Update Lambda configuration
@@ -126,8 +125,7 @@ jobs:
           aws lambda update-function-configuration \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
             --memory-size ${{ env.LAMBDA_MEMORY_SIZE }} \
-            --timeout ${{ env.LAMBDA_TIMEOUT }} \
-            --environment Variables='{AWS_DEFAULT_REGION=${{ env.AWS_REGION }}}'
+            --timeout ${{ env.LAMBDA_TIMEOUT }}
 
       - name: Create/Update API Gateway
         run: |

@@ -15,7 +15,8 @@ class TextractService:
         """
         Initialize AWS Textract service with proper credential handling
         """
-        self.region = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+        # Try to get region from environment, fallback to ap-southeast-2
+        self.region = os.getenv('AWS_DEFAULT_REGION', 'ap-southeast-2')
         self.textract_client = None
         self._initialize_client()
     
